@@ -1,125 +1,91 @@
-// Load environment variables from .env file
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
-
-// Import Google's Generative AI library
-const {
-    GoogleGenerativeAI,
-} = require("@google/generative-ai");
-
-// Import WhatsApp Web client and QR code generator
+const http = require('http'); // لمنع فشل النشر (Timed Out)
+const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 
-// Configuration constants
-const MODEL_NAME = "gemini-2.0-flash";
+// إعداد سيرفر وهمي لمنع Render من إغلاق البوت
+http.createServer((req, res) => {
+    res.writeHead(200, {'Content-Type': 'text/plain'});
+    res.end('Bot is running...\n');
+}).listen(process.env.PORT || 3000);
+
+const MODEL_NAME = "gemini-1.5-flash";
 const API_KEY = process.env.API_KEY;
 const SESSION_DATA_PATH = path.join(__dirname, '.wwebjs_auth');
 const CHAT_HISTORY_PATH = path.join(__dirname, 'chat_histories.json');
 
-// Checks if chat_histories.json exists. Create session directory if it doesn't exist
-if (!fs.existsSync(SESSION_DATA_PATH)) {
-    fs.mkdirSync(SESSION_DATA_PATH);
-}
+if (!fs.existsSync(SESSION_DATA_PATH)) { fs.mkdirSync(SESSION_DATA_PATH); }
 
-// Load existing chat histories from file
 let chatHistories = {};
 if (fs.existsSync(CHAT_HISTORY_PATH)) {
     chatHistories = JSON.parse(fs.readFileSync(CHAT_HISTORY_PATH, 'utf8'));
 }
 
-// Initialize WhatsApp client with local authentication
+// إعداد المتصفح ليعمل على سيرفر Render
 const client = new Client({
-    authStrategy: new LocalAuth({
-        dataPath: SESSION_DATA_PATH
-    }),
+    authStrategy: new LocalAuth({ dataPath: SESSION_DATA_PATH }),
+    puppeteer: {
+        headless: true,
+        args: ['--no-sandbox', '--disable-setuid-sandbox'],
+        executablePath: process.env.PUPPETEER_CACHE_DIR + '/chrome/linux-144.0.7559.96/chrome-linux64/chrome'
+    }
 });
 
-// Initialize Google's Generative AI model
 const genAI = new GoogleGenerativeAI(API_KEY);
 const model = genAI.getGenerativeModel({ model: MODEL_NAME });
 
-// Function to save chat histories to file
 function saveChatHistories() {
     fs.writeFileSync(CHAT_HISTORY_PATH, JSON.stringify(chatHistories, null, 2));
 }
 
-// Handle QR code generation for WhatsApp Web authentication
 client.on('qr', qr => {
-    console.log('Scan this QR code with your WhatsApp:');
-    qrcode.generate(qr, { small: true });
+    if (!process.env.PHONE_NUMBER) {
+        console.log('Scan this QR code:');
+        qrcode.generate(qr, { small: true });
+    }
 });
 
-// Handle client ready event
 client.on('ready', () => {
-    console.log('>> Bot is Ready! <<');
+    console.log('>> البوت جاهز والربط تم بنجاح! <<');
 });
 
-// Handle incoming messages
 client.on('message', async message => {
-    // Get chat information
     const chat = await message.getChat();
-    // Ignore group messages
-    if (chat.isGroup) {
-        return;
-    }
-    // Ignore status messages
-    if (message.isStatus) {
-        return;
-    }
+    if (chat.isGroup || message.isStatus) return;
 
     const chatId = message.from;
     const userMessage = message.body;
 
-    console.log(`Received message from ${chatId}: "${userMessage}"`);
-
-    // Initialize chat history for new users
-    if (!chatHistories[chatId]) {
-        chatHistories[chatId] = [];
-        console.log(`Initialized new chat history for ${chatId}`);
-    }
-
-    // Limit chat history length
-    const maxHistoryLength = 20;
-    if (chatHistories[chatId].length > maxHistoryLength) {
-        chatHistories[chatId] = chatHistories[chatId].slice(-maxHistoryLength);
-    }
+    if (!chatHistories[chatId]) { chatHistories[chatId] = []; }
 
     try {
-        // Start AI chat with history
-        const aiChat = model.startChat({
-            history: chatHistories[chatId],
-        });
-
-        // Get AI response
+        const aiChat = model.startChat({ history: chatHistories[chatId] });
         const result = await aiChat.sendMessage(userMessage);
-        const response = result.response;
-        const aiResponseText = response.text();
-
-        console.log(`AI Response for ${chatId}:`, aiResponseText);
-
-        // Send response back to user
+        const aiResponseText = result.response.text();
         await message.reply(aiResponseText);
 
-        // Update chat history
         chatHistories[chatId].push({ role: 'user', parts: [{ text: userMessage }] });
         chatHistories[chatId].push({ role: 'model', parts: [{ text: aiResponseText }] });
-        
-        // Save updated chat histories
         saveChatHistories();
-
     } catch (error) {
-        console.error(`Error processing message from ${chatId}:`, error);
-        // Send error message to user
-        await message.reply('Sorry, I encountered an error trying to process your message. Please try again later.');
+        console.error("Error:", error);
     }
 });
 
-// Handle client disconnection
-client.on('disconnected', (reason) => {
-    console.log('Client was logged out: ', reason);
-});
+async function start() {
+    await client.initialize();
+    // إذا أضفت رقمك في إعدادات Render، سيظهر لك كود أرقام بدلاً من الـ QR
+    if (process.env.PHONE_NUMBER) {
+        setTimeout(async () => {
+            const pairingCode = await client.getPairingCode(process.env.PHONE_NUMBER);
+            console.log('-----------------------------------------');
+            console.log('كود الربط الخاص بك هو:', pairingCode);
+            console.log('-----------------------------------------');
+        }, 5000);
+    }
+}
 
-// Initialize the WhatsApp client
-client.initialize();
+start();
