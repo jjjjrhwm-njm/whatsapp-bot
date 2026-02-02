@@ -1,18 +1,18 @@
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
-const http = require('http'); // لمنع فشل النشر (Timed Out)
+const http = require('http');
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 
-// إعداد سيرفر وهمي لمنع Render من إغلاق البوت
+// سيرفر وهمي لمنع فشل النشر
 http.createServer((req, res) => {
     res.writeHead(200, {'Content-Type': 'text/plain'});
     res.end('Bot is running...\n');
 }).listen(process.env.PORT || 3000);
 
-const MODEL_NAME = "gemini-1.5-flash";
+const MODEL_NAME = "gemini-2.0-flash";
 const API_KEY = process.env.API_KEY;
 const SESSION_DATA_PATH = path.join(__dirname, '.wwebjs_auth');
 const CHAT_HISTORY_PATH = path.join(__dirname, 'chat_histories.json');
@@ -24,7 +24,6 @@ if (fs.existsSync(CHAT_HISTORY_PATH)) {
     chatHistories = JSON.parse(fs.readFileSync(CHAT_HISTORY_PATH, 'utf8'));
 }
 
-// إعداد المتصفح ليعمل على سيرفر Render
 const client = new Client({
     authStrategy: new LocalAuth({ dataPath: SESSION_DATA_PATH }),
     puppeteer: {
@@ -77,13 +76,17 @@ client.on('message', async message => {
 
 async function start() {
     await client.initialize();
-    // إذا أضفت رقمك في إعدادات Render، سيظهر لك كود أرقام بدلاً من الـ QR
+    // التأكد من وجود الرقم لطلب كود الربط
     if (process.env.PHONE_NUMBER) {
         setTimeout(async () => {
-            const pairingCode = await client.getPairingCode(process.env.PHONE_NUMBER);
-            console.log('-----------------------------------------');
-            console.log('كود الربط الخاص بك هو:', pairingCode);
-            console.log('-----------------------------------------');
+            try {
+                const pairingCode = await client.getPairingCode(process.env.PHONE_NUMBER);
+                console.log('-----------------------------------------');
+                console.log('كود الربط الخاص بك هو:', pairingCode);
+                console.log('-----------------------------------------');
+            } catch (err) {
+                console.log('فشل طلب الكود، تأكد من تحديث المكتبة.');
+            }
         }, 5000);
     }
 }
